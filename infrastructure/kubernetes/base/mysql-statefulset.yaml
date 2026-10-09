@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  labels:
+    app: mysql
+spec:
+  serviceName: mysql
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          ports:
+            - containerPort: 3306
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: MYSQL_ROOT_PASSWORD
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: MYSQL_USER
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: MYSQL_PASSWORD
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+          readinessProbe:
+            # $(VAR) substitution only applies to container command/args, not probe.exec.command,
+            # so this needs a real shell to pick up $MYSQL_ROOT_PASSWORD from the environment.
+            # Must be "127.0.0.1", not "localhost": the mysql client treats "localhost" as a
+            # request for the Unix socket specifically, and on this image/volume the classic
+            # protocol socket under /var/lib/mysql never actually gets created (only the X
+            # Protocol socket under /var/run/mysqld does) -- TCP against 127.0.0.1 works fine.
+            exec:
+              command: ["sh", "-c", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$MYSQL_ROOT_PASSWORD\""]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            # Liveness stays tolerant on purpose: a slow/failed probe exec under CPU contention
+            # is not the same as mysqld actually being down, and killing a healthy process on a
+            # false positive is worse than a slightly late real restart. Readiness (above) is
+            # the one that should react quickly -- failing it doesn't kill the container.
+            exec:
+              command: ["sh", "-c", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$MYSQL_ROOT_PASSWORD\""]
+            initialDelaySeconds: 45
+            periodSeconds: 20
+            timeoutSeconds: 15
+            failureThreshold: 15
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: mysql-data

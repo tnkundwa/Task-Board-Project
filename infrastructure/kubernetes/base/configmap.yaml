@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: taskboard-config
+data:
+  # Non-secret env vars shared across app Deployments.
+  TASK_SERVICE_URL: "http://task-service:8081"
+  TEAM_SERVICE_URL: "http://team-service:8082"
+  NOTIFICATION_SERVICE_URL: "http://notification-service:8083"
+  SPRING_RABBITMQ_HOST: "rabbitmq"
+  SPRING_RABBITMQ_PORT: "5672"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-config
+data:
+  # Overrides the packaged application.yml's routes (which hard-code localhost). Mounted as a
+  # volume and picked up via SPRING_CONFIG_ADDITIONAL_LOCATION on the gateway container -- the
+  # packaged JAR itself is never touched. Also adds routes that expose each backend's Swagger UI
+  # and OpenAPI JSON through the gateway (Challenge 4 requirement), stripping the service-name
+  # prefix before forwarding.
+  application.yml: |
+    server:
+      port: 8080
+
+    spring:
+      application:
+        name: api-gateway
+      cloud:
+        gateway:
+          routes:
+            - id: task-service
+              uri: http://task-service:8081
+              predicates:
+                - Path=/api/tasks/**
+            - id: team-service
+              uri: http://team-service:8082
+              predicates:
+                - Path=/api/teams/**
+            - id: notification-service
+              uri: http://notification-service:8083
+              predicates:
+                - Path=/api/notifications/**
+            - id: task-service-docs
+              uri: http://task-service:8081
+              predicates:
+                - Path=/task-service/**
+              filters:
+                - RewritePath=/task-service/(?<segment>.*), /${segment}
+            - id: team-service-docs
+              uri: http://team-service:8082
+              predicates:
+                - Path=/team-service/**
+              filters:
+                - RewritePath=/team-service/(?<segment>.*), /${segment}
+            - id: notification-service-docs
+              uri: http://notification-service:8083
+              predicates:
+                - Path=/notification-service/**
+              filters:
+                - RewritePath=/notification-service/(?<segment>.*), /${segment}

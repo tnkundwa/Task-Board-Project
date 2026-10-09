@@ -1,0 +1,20 @@
+# minikube has no single declarative "cluster config" file the way `kind create cluster --config`
+# does, so this records the settings the cluster must be started with. Start it with:
+#
+#   minikube start --profile taskboard --driver=docker --cpus=4 --memory=6g --cni=calico \
+#     --addons=ingress --addons=default-storageclass --addons=storage-provisioner
+#
+# then: kubectl config use-context taskboard
+#
+# --cni=calico is required, not optional: minikube's default CNI is a plain bridge plugin with
+# no NetworkPolicy enforcement at all, so Challenge 5's policies would silently do nothing
+# without it (see docs/decisions.md).
+profile: taskboard
+driver: docker
+cpus: 4
+memory: 6g
+cni: calico
+addons:
+  - ingress
+  - default-storageclass
+  - storage-provisioner

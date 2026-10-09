@@ -1,0 +1,51 @@
+server {
+    listen 3000;
+    listen [::]:3000;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # nginx's entrypoint runs envsubst restricted to names that are actually set as environment
+    # variables in the container, so only GATEWAY_UPSTREAM/DNS_RESOLVER below get substituted --
+    # $uri, $host, etc. are left untouched since they aren't env vars. Do not escape them as $$.
+    #
+    # proxy_pass with a literal host resolves it once, at config-load time -- if the gateway's
+    # hostname isn't resolvable yet (e.g. this container started standalone, or before the
+    # gateway is up), nginx refuses to start at all, taking down static file serving with it.
+    # Putting the upstream in a variable defers resolution to request time via `resolver`, so an
+    # unreachable gateway only 502s /api/ calls instead of crashing the whole server.
+    resolver ${DNS_RESOLVER} valid=10s;
+
+    location /api/ {
+        set $upstream ${GATEWAY_UPSTREAM};
+        proxy_pass $upstream/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Next.js static export can only pre-render one file per dynamic [teamId] route (there's no
+    # fixed list of team ids at build time), so it exports a single placeholder page per route
+    # shape. These rewrite any real team id to that placeholder file; the client JS reads the
+    # real id from the browser URL at runtime. Order doesn't matter between these four --
+    # their patterns are mutually exclusive.
+    location ~ ^/teams/[^/]+/tasks/?$ {
+        try_files /teams/placeholder/tasks/index.html =404;
+    }
+    location ~ ^/teams/[^/]+/members/?$ {
+        try_files /teams/placeholder/members/index.html =404;
+    }
+    location ~ ^/teams/[^/]+/settings/?$ {
+        try_files /teams/placeholder/settings/index.html =404;
+    }
+    location ~ ^/teams/[^/]+/?$ {
+        try_files /teams/placeholder/index.html =404;
+    }
+
+    # SPA fallback: serve index.html for any other unmatched path instead of a 404.
+    location / {
+        try_files $uri $uri.html $uri/ /index.html;
+    }
+}

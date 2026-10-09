@@ -1,0 +1,44 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: task-service
+  config:
+    import: optional:file:../.env[.properties]
+  datasource:
+    url: jdbc:mysql://localhost:3306/taskdb
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: true
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: ${RABBITMQ_USERNAME}
+    password: ${RABBITMQ_PASSWORD}
+    # Without this, a broker that's unreachable (not "refusing", just gone -- e.g. its pod was
+    # just deleted) leaves CachingConnectionFactory's connect attempt hanging on the OS-level TCP
+    # timeout, observed to take ~60s in this environment. TaskEventPublisher calls convertAndSend
+    # synchronously from the request thread, so that 60s would otherwise be added straight onto
+    # the response time of task creation/assignment/status-change during a RabbitMQ outage.
+    connection-timeout: 2000
+
+team-service:
+  url: http://localhost:8082
+  # Same reasoning as spring.rabbitmq.connection-timeout above, applied to the synchronous HTTP
+  # call TeamServiceClient makes during task assignment: bound both legs so "Team Service is
+  # down" turns into a fast, clear error instead of a multi-minute hang on the assign request.
+  # 1500ms, not 2000ms: measured end-to-end (through the Gateway, from outside the cluster) a
+  # 2000ms client timeout landed the full request at ~2.1s once the Gateway hop and JSON
+  # marshalling are added on top -- over the challenge's "under 2 seconds" bar. 1500ms leaves
+  # headroom for that overhead while still comfortably exceeding normal Team Service latency.
+  connect-timeout-ms: 1500
+  read-timeout-ms: 1500

@@ -1,0 +1,148 @@
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "${MYSQL_PORT}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      - taskboard-net
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    ports:
+      - "${RABBITMQ_PORT}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks:
+      - taskboard-net
+
+  team-service:
+    build: ../../services/team-service
+    image: task-board/team-service:${TAG}
+    environment:
+      SERVER_PORT: 8082
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/teamdb
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "${TEAM_SERVICE_PORT}:8082"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - taskboard-net
+
+  task-service:
+    build: ../../services/task-service
+    image: task-board/task-service:${TAG}
+    environment:
+      SERVER_PORT: 8081
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/taskdb
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      TEAM_SERVICE_URL: http://team-service:8082
+    ports:
+      - "${TASK_SERVICE_PORT}:8081"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - taskboard-net
+
+  notification-service:
+    build: ../../services/notification-service
+    image: task-board/notification-service:${TAG}
+    environment:
+      SERVER_PORT: 8083
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/notificationdb
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+    ports:
+      - "${NOTIFICATION_SERVICE_PORT}:8083"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - taskboard-net
+
+  api-gateway:
+    build: ../../services/api-gateway
+    image: task-board/api-gateway:${TAG}
+    environment:
+      SERVER_PORT: 8080
+      # Overrides the application.yml routes (which point at localhost) with container DNS names.
+      SPRING_CLOUD_GATEWAY_ROUTES_0_ID: task-service
+      SPRING_CLOUD_GATEWAY_ROUTES_0_URI: http://task-service:8081
+      SPRING_CLOUD_GATEWAY_ROUTES_0_PREDICATES_0: Path=/api/tasks/**
+      SPRING_CLOUD_GATEWAY_ROUTES_1_ID: team-service
+      SPRING_CLOUD_GATEWAY_ROUTES_1_URI: http://team-service:8082
+      SPRING_CLOUD_GATEWAY_ROUTES_1_PREDICATES_0: Path=/api/teams/**
+      SPRING_CLOUD_GATEWAY_ROUTES_2_ID: notification-service
+      SPRING_CLOUD_GATEWAY_ROUTES_2_URI: http://notification-service:8083
+      SPRING_CLOUD_GATEWAY_ROUTES_2_PREDICATES_0: Path=/api/notifications/**
+    ports:
+      - "${GATEWAY_PORT}:8080"
+    depends_on:
+      task-service:
+        condition: service_healthy
+      team-service:
+        condition: service_healthy
+      notification-service:
+        condition: service_healthy
+    networks:
+      - taskboard-net
+
+  frontend:
+    build: ../../frontend
+    image: task-board/frontend:${TAG}
+    environment:
+      GATEWAY_UPSTREAM: http://api-gateway:8080
+    ports:
+      - "${FRONTEND_PORT}:3000"
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    networks:
+      - taskboard-net
+
+networks:
+  taskboard-net:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  rabbitmq-data:

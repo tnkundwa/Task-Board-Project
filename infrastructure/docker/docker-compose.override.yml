@@ -1,0 +1,18 @@
+services:
+  frontend:
+    build:
+      context: ../../frontend
+      target: dev
+    image: task-board/frontend:dev
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:${GATEWAY_PORT}
+    volumes:
+      - ../../frontend:/app
+      - /app/node_modules
+      - /app/.next
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/']
+      interval: 15s
+      timeout: 3s
+      start_period: 40s
+      retries: 5
